@@ -1,33 +1,11 @@
-
-# ============================================================================
-# IMPORTS
-# ============================================================================
-
-import streamlit as st  # Web app framework
-import pandas as pd  # Data manipulation
-import numpy as np  # Numerical operations
-import pickle  # Load saved models
-# import plotly.express as px  # Interactive visualizations
-# import plotly.graph_objects as go  # Advanced plotting
-from pathlib import Path  # File path handling
-import sys  # System operations
-
-# Add models directory to path for importing recommendation functions
+import streamlit as st  
+import pandas as pd  
+import numpy as np 
+import pickle  
+from pathlib import Path  
+import sys  
 sys.path.append(str(Path(__file__).parent / 'models'))
 
-# ============================================================================
-# PAGE CONFIGURATION
-# ============================================================================
-
-# Configure Streamlit page settings
-# This must be the first Streamlit command
-
-
-# ============================================================================
-# CUSTOM CSS STYLING
-# ============================================================================
-
-# Add custom CSS to improve the app's appearance
 st.markdown("""
     <style>
     /* Main title styling */
@@ -78,9 +56,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ============================================================================
-# LOAD MODELS AND DATA
-# ============================================================================
 
 @st.cache_data  # Cache data to avoid reloading on every interaction
 def load_data_and_models():
@@ -100,23 +75,11 @@ def load_data_and_models():
     try:
         # Define paths to model files
         models_path = Path('models')
-        
-        # Load processed book data
-        # This contains all cleaned data and engineered features
         df = pd.read_pickle(models_path / 'books_data.pkl')
-        
-        # Load TF-IDF vectorizer
-        # Used to transform text into numerical features
         with open(models_path / 'tfidf_vectorizer.pkl', 'rb') as f:
             tfidf_vectorizer = pickle.load(f)
-        
-        # Load pre-computed TF-IDF matrix
-        # Contains text features for all books
         with open(models_path / 'tfidf_matrix.pkl', 'rb') as f:
             tfidf_matrix = pickle.load(f)
-        
-        # Load cosine similarity matrix
-        # Pre-computed similarities between all book pairs
         with open(models_path / 'cosine_similarity_matrix.pkl', 'rb') as f:
             cosine_sim = pickle.load(f)
         
@@ -124,7 +87,6 @@ def load_data_and_models():
         # Used for cluster-based recommendations
         with open(models_path / 'kmeans_model.pkl', 'rb') as f:
             kmeans = pickle.load(f)
-        
         return df, tfidf_vectorizer, tfidf_matrix, cosine_sim, kmeans
     
     except Exception as e:
@@ -134,9 +96,7 @@ def load_data_and_models():
 # Load all data and models at startup
 df_books, tfidf_vectorizer, tfidf_matrix, cosine_similarity_matrix, kmeans_model = load_data_and_models()
 
-# ============================================================================
-# RECOMMENDATION FUNCTIONS
-# ============================================================================
+
 
 def get_content_based_recommendations(book_name, n_recommendations=10):
     """
@@ -154,31 +114,23 @@ def get_content_based_recommendations(book_name, n_recommendations=10):
         pd.DataFrame: Recommended books with similarity scores
     """
     try:
-        # Find the book in the database (case-insensitive search)
-        book_indices = df_books[df_books['book_name'].str.lower() == book_name.lower()].index
+        book_indices = df_books[df_books['Book Name'].str.lower() == book_name.lower()].index
         
-        # If exact match not found, try partial matching
         if len(book_indices) == 0:
-            book_indices = df_books[df_books['book_name'].str.lower().str.contains(book_name.lower(), na=False)].index
+            book_indices = df_books[df_books['Book Name'].str.lower().str.contains(book_name.lower(), na=False)].index
             if len(book_indices) == 0:
                 return None, f"Book '{book_name}' not found in database."
         
-        # Use the first match
         book_idx = book_indices[0]
-        
-        # Get similarity scores for this book with all others
-        # cosine_similarity_matrix[book_idx] gives similarities with all books
+        print(book_idx)
+
         sim_scores = list(enumerate(cosine_similarity_matrix[book_idx]))
-        
-        # Sort by similarity score (descending)
-        # Skip first element (the book itself, similarity = 1.0)
+
         sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)[1:n_recommendations+1]
         
-        # Extract book indices and scores
         book_indices = [i[0] for i in sim_scores]
         similarity_scores = [i[1] for i in sim_scores]
         
-        # Create recommendations dataframe
         recommendations = df_books.iloc[book_indices].copy()
         recommendations['similarity_score'] = similarity_scores
         recommendations['similarity_percentage'] = (recommendations['similarity_score'] * 100).round(2)
@@ -204,29 +156,27 @@ def get_cluster_based_recommendations(book_name, n_recommendations=10):
     """
     try:
         # Find the book
-        book_indices = df_books[df_books['book_name'].str.lower() == book_name.lower()].index
+        book_indices = df_books[df_books['Book Name'].str.lower() == book_name.lower()].index
         
         if len(book_indices) == 0:
-            book_indices = df_books[df_books['book_name'].str.lower().str.contains(book_name.lower(), na=False)].index
+            book_indices = df_books[df_books['Book Name'].str.lower().str.contains(book_name.lower(), na=False)].index
             if len(book_indices) == 0:
                 return None, f"Book '{book_name}' not found in database."
         
         book_idx = book_indices[0]
         
         # Get the cluster ID of the input book
-        book_cluster = df_books.iloc[book_idx]['cluster']
+        book_cluster = df_books.iloc[book_idx]['Cluster']
         
         # Find all books in the same cluster (excluding the input book)
         cluster_books = df_books[
-            (df_books['cluster'] == book_cluster) & 
+            (df_books['Cluster'] == book_cluster) & 
             (df_books.index != book_idx)
         ].copy()
         
-        # Sort by popularity or rating
-        if 'popularity_score' in cluster_books.columns:
-            cluster_books = cluster_books.nlargest(n_recommendations, 'popularity_score')
-        elif 'rating' in cluster_books.columns:
-            cluster_books = cluster_books.nlargest(n_recommendations, 'rating')
+
+        if 'Rating' in cluster_books.columns:
+            cluster_books = cluster_books.nlargest(n_recommendations, 'Rating')
         else:
             cluster_books = cluster_books.head(n_recommendations)
         
@@ -236,7 +186,7 @@ def get_cluster_based_recommendations(book_name, n_recommendations=10):
         return None, f"Error: {str(e)}"
 
 def get_hybrid_recommendations(book_name, n_recommendations=10, 
-                               weight_content=0.5, weight_cluster=0.3, weight_popularity=0.2):
+                               weight_content=0.5, weight_cluster=0.3):
     """
     Generate recommendations using hybrid approach.
     
@@ -257,15 +207,15 @@ def get_hybrid_recommendations(book_name, n_recommendations=10,
     """
     try:
         # Find the book
-        book_indices = df_books[df_books['book_name'].str.lower() == book_name.lower()].index
+        book_indices = df_books[df_books['Book Name'].str.lower() == book_name.lower()].index
         
         if len(book_indices) == 0:
-            book_indices = df_books[df_books['book_name'].str.lower().str.contains(book_name.lower(), na=False)].index
+            book_indices = df_books[df_books['Book Name'].str.lower().str.contains(book_name.lower(), na=False)].index
             if len(book_indices) == 0:
                 return None, f"Book '{book_name}' not found in database."
         
         book_idx = book_indices[0]
-        book_cluster = df_books.iloc[book_idx]['cluster']
+        book_cluster = df_books.iloc[book_idx]['Cluster']
         
         # Create scoring dataframe
         df_score = df_books.copy()
@@ -274,20 +224,13 @@ def get_hybrid_recommendations(book_name, n_recommendations=10,
         df_score['content_score'] = cosine_similarity_matrix[book_idx]
         
         # 2. Cluster score (1 if same cluster, 0 otherwise)
-        df_score['cluster_score'] = (df_score['cluster'] == book_cluster).astype(int)
+        df_score['cluster_score'] = (df_score['Cluster'] == book_cluster).astype(int)
         
-        # 3. Normalize popularity score to 0-1 range
-        if 'popularity_score' in df_score.columns:
-            max_pop = df_score['popularity_score'].max()
-            df_score['popularity_norm'] = df_score['popularity_score'] / max_pop if max_pop > 0 else 0
-        else:
-            df_score['popularity_norm'] = 0
         
         # Calculate weighted hybrid score
         df_score['hybrid_score'] = (
             weight_content * df_score['content_score'] +
-            weight_cluster * df_score['cluster_score'] +
-            weight_popularity * df_score['popularity_norm']
+            weight_cluster * df_score['cluster_score'] 
         )
         
         # Remove the input book
@@ -319,16 +262,13 @@ def get_popular_books(n_recommendations=10, rating_threshold=4.0):
     """
     try:
         # Filter by rating threshold
-        if 'rating' in df_books.columns:
-            popular_books = df_books[df_books['rating'] >= rating_threshold].copy()
+        if 'Rating' in df_books.columns:
+            popular_books = df_books[df_books['Rating'] >= rating_threshold].copy()
         else:
             popular_books = df_books.copy()
         
-        # Sort by popularity score or rating
-        if 'popularity_score' in popular_books.columns:
-            popular_books = popular_books.nlargest(n_recommendations, 'popularity_score')
-        elif 'rating' in popular_books.columns:
-            popular_books = popular_books.nlargest(n_recommendations, 'rating')
+        if 'Rating' in popular_books.columns:
+            popular_books = popular_books.nlargest(n_recommendations, 'Rating')
         else:
             popular_books = popular_books.head(n_recommendations)
         
@@ -337,96 +277,6 @@ def get_popular_books(n_recommendations=10, rating_threshold=4.0):
     except Exception as e:
         return None, f"Error: {str(e)}"
 
-# ============================================================================
-# VISUALIZATION FUNCTIONS
-# ============================================================================
-
-def create_rating_distribution():
-    """
-    Create an interactive histogram of rating distribution.
-    
-    Returns:
-        plotly.graph_objects.Figure: Interactive histogram
-    """
-    fig = px.histogram(
-        df_books,
-        x='rating',
-        nbins=30,
-        title='Distribution of Book Ratings',
-        labels={'rating': 'Rating', 'count': 'Number of Books'},
-        color_discrete_sequence=['#1E88E5']
-    )
-    fig.update_layout(
-        showlegend=False,
-        height=400,
-        xaxis_title="Rating",
-        yaxis_title="Number of Books"
-    )
-    return fig
-
-def create_cluster_distribution():
-    """
-    Create a bar chart showing books per cluster.
-    
-    Returns:
-        plotly.graph_objects.Figure: Bar chart
-    """
-    cluster_counts = df_books['cluster'].value_counts().sort_index()
-    
-    fig = px.bar(
-        x=cluster_counts.index,
-        y=cluster_counts.values,
-        title='Books Distribution Across Clusters',
-        labels={'x': 'Cluster ID', 'y': 'Number of Books'},
-        color=cluster_counts.values,
-        color_continuous_scale='Viridis'
-    )
-    fig.update_layout(
-        showlegend=False,
-        height=400,
-        xaxis_title="Cluster ID",
-        yaxis_title="Number of Books"
-    )
-    return fig
-
-def create_top_authors_chart(top_n=15):
-    """
-    Create a horizontal bar chart of top authors by average rating.
-    
-    Args:
-        top_n (int): Number of top authors to show
-    
-    Returns:
-        plotly.graph_objects.Figure: Horizontal bar chart
-    """
-    # Calculate author statistics
-    author_stats = df_books.groupby('author').agg({
-        'rating': 'mean',
-        'name': 'count'
-    }).reset_index()
-    author_stats.columns = ['author', 'avg_rating', 'book_count']
-    
-    # Filter authors with at least 2 books
-    author_stats = author_stats[author_stats['book_count'] >= 2]
-    top_authors = author_stats.nlargest(top_n, 'avg_rating')
-    
-    fig = px.bar(
-        top_authors,
-        x='avg_rating',
-        y='author',
-        orientation='h',
-        title=f'Top {top_n} Authors by Average Rating (Min 2 Books)',
-        labels={'avg_rating': 'Average Rating', 'author': 'Author'},
-        color='avg_rating',
-        color_continuous_scale='Blues'
-    )
-    fig.update_layout(
-        showlegend=False,
-        height=600,
-        xaxis_title="Average Rating",
-        yaxis_title="Author"
-    )
-    return fig
 
 # ============================================================================
 # MAIN APP INTERFACE
@@ -441,24 +291,14 @@ def app():
     # Display dataset statistics in sidebar
     st.sidebar.subheader("📈 Dataset Statistics")
     st.sidebar.metric("Total Books", f"{len(df_books):,}")
-    st.sidebar.metric("Unique Authors", f"{df_books['author'].nunique():,}")
-    st.sidebar.metric("Number of Clusters", f"{df_books['cluster'].nunique()}")
+    st.sidebar.metric("Unique Authors", f"{df_books['Author'].nunique():,}")
+    st.sidebar.metric("Number of Clusters", f"{df_books['Cluster'].nunique()}")
     
-    if 'rating' in df_books.columns:
-        avg_rating = df_books['rating'].mean()
+    if 'Rating' in df_books.columns:
+        avg_rating = df_books['Rating'].mean()
         st.sidebar.metric("Average Rating", f"{avg_rating:.2f} ⭐")
-    
-    # ========================================================================
-    # PAGE 1: HOME & RECOMMENDATIONS
-    # ========================================================================
-    
-    # if page == "🏠 Home & Recommendations":
-        # Create tabs for different features
+
     tab1, tab2, tab3 = st.tabs(["🔍 Get Recommendations", "🌟 Popular Books", "🎲 Random Discovery"])
-        
-        # ====================================================================
-        # TAB 1: GET RECOMMENDATIONS
-        # ====================================================================
         
     with tab1:
         st.header("Find Books Similar to Your Favorites")
@@ -470,20 +310,17 @@ def app():
         - **Hybrid**: Combines multiple factors for best results
         """)
         
-        # Create two columns for input and settings
         col1, col2 = st.columns([2, 1])
         
         with col1:
-            # Book name input with autocomplete suggestions
-            # Create a searchable selectbox with book names
+
             book_name_input = st.selectbox(
                 "Select or type a book name:",
-                options=[''] + sorted(df_books['book_name'].unique().tolist()),
+                options=[''] + sorted(df_books['Book Name'].unique().tolist()),
                 help="Start typing to search for books"
             )
         
         with col2:
-            # Number of recommendations slider
             n_recs = st.slider(
                 "Number of recommendations:",
                 min_value=5,
@@ -493,7 +330,6 @@ def app():
                 help="How many recommendations do you want?"
             )
         
-        # Recommendation method selection
         rec_method = st.radio(
             "Choose recommendation method:",
             ["Hybrid (Recommended)", "Content-Based", "Cluster-Based"],
@@ -501,11 +337,10 @@ def app():
             help="Hybrid combines multiple methods for best results"
         )
         
-        # Advanced options in expander
         with st.expander("⚙️ Advanced Options (Hybrid Method Only)"):
             st.markdown("Adjust weights for the hybrid recommendation algorithm:")
             
-            col_w1, col_w2, col_w3 = st.columns(3)
+            col_w1, col_w2 = st.columns(2)
             
             with col_w1:
                 weight_content = st.slider(
@@ -521,19 +356,12 @@ def app():
                     help="Importance of cluster membership"
                 )
             
-            with col_w3:
-                weight_popularity = st.slider(
-                    "Popularity Weight",
-                    0.0, 1.0, 0.2, 0.1,
-                    help="Importance of book popularity"
-                )
+
             
-            # Normalize weights to sum to 1.0
-            total_weight = weight_content + weight_cluster + weight_popularity
+            total_weight = weight_content + weight_cluster
             if total_weight > 0:
                 weight_content /= total_weight
                 weight_cluster /= total_weight
-                weight_popularity /= total_weight
         
         # Generate recommendations button
         if st.button("🚀 Get Recommendations", type="primary"):
@@ -551,7 +379,7 @@ def app():
                     else:  # Hybrid
                         recommendations, error = get_hybrid_recommendations(
                             book_name_input, n_recs,
-                            weight_content, weight_cluster, weight_popularity
+                            weight_content, weight_cluster
                         )
                     
                     # Display results
@@ -565,21 +393,21 @@ def app():
                         
                         for idx, row in recommendations.iterrows():
                             # Create an expander for each book
-                            with st.expander(f"**{row['book_name']}** by {row['author']}", expanded=(idx == recommendations.index[0])):
+                            with st.expander(f"**{row['Book Name']}** by {row['Author']}", expanded=(idx == recommendations.index[0])):
                                 # Create columns for book details
                                 detail_col1, detail_col2, detail_col3 = st.columns([2, 1, 1])
                                 
                                 with detail_col1:
-                                    if 'description' in row and pd.notna(row['description']) and row['description'] != '':
-                                        st.markdown(f"**Description:** {row['description'][:200]}...")
+                                    if 'Description' in row and pd.notna(row['Description']) and row['Description'] != '':
+                                        st.markdown(f"**Description:** {row['Description'][:200]}...")
                                     else:
                                         st.markdown("*No description available*")
                                 
                                 with detail_col2:
-                                    if 'rating' in row:
-                                        st.metric("Rating", f"{row['rating']:.2f} ⭐")
-                                    if 'price' in row:
-                                        st.metric("Price", f"${row['price']:.2f}")
+                                    if 'Rating' in row:
+                                        st.metric("Rating", f"{row['Rating']:.2f} ⭐")
+                                    if 'Price' in row:
+                                        st.metric("Price", f"{row['Price']:.2f}")
                                 
                                 with detail_col3:
                                     if 'similarity_score' in row:
@@ -593,9 +421,6 @@ def app():
             else:
                 st.warning("⚠️ Please select a book name first.")
         
-        # ====================================================================
-        # TAB 2: POPULAR BOOKS
-        # ====================================================================
         
         with tab2:
             st.header("🌟 Trending & Popular Books")
@@ -624,7 +449,7 @@ def app():
                     st.success(f"Showing top {len(popular_books)} popular books")
                     
                     # Display as a formatted table
-                    display_cols = ['book_name', 'author', 'rating', 'number_of_reviews', 'price']
+                    display_cols = ['Book Name', 'Author', 'Rating', 'Number of Reviews', 'Price']
                     display_cols = [col for col in display_cols if col in popular_books.columns]
                     
                     # Format the dataframe for better display
@@ -658,124 +483,22 @@ def app():
             
             for idx, row in random_books.iterrows():
                 with st.container():
-                    st.markdown(f"### 📖 {row['book_name']}")
+                    st.markdown(f"### 📖 {row['Book Name']}")
                     col1, col2 = st.columns([3, 1])
                     
                     with col1:
-                        st.markdown(f"**Author:** {row['author']}")
-                        if 'description' in row and pd.notna(row['description']):
-                            st.markdown(f"*{row['description'][:150]}...*")
+                        st.markdown(f"**Author:** {row['Author']}")
+                        if 'Description' in row and pd.notna(row['Description']):
+                            st.markdown(f"*{row['Description'][:150]}...*")
                     
                     with col2:
-                        if 'rating' in row:
-                            st.metric("Rating", f"{row['rating']:.2f} ⭐")
-                        if 'price' in row:
-                            st.metric("Price", f"${row['price']:.2f}")
+                        if 'Rating' in row:
+                            st.metric("Rating", f"{row['Rating']:.2f} ⭐")
+                        if 'Price' in row:
+                            st.metric("Price", f"{row['Price']:.2f}")
                     
                     st.markdown("---")
     
-    # ========================================================================
-    # PAGE 2: DATA EXPLORATION
-    # ========================================================================
-    
-    # elif page == "📊 Data Exploration":
-    #     st.header("📊 Explore the Dataset")
-    #     st.markdown("Visualize and analyze the book dataset with interactive charts.")
-        
-    #     # Create sub-tabs for different visualizations
-    #     viz_tab1, viz_tab2, viz_tab3, viz_tab4 = st.tabs([
-    #         "📈 Ratings Analysis",
-    #         "🎯 Cluster Analysis",
-    #         "👥 Author Analysis",
-    #         "📋 Dataset Overview"
-    #     ])
-        
-    #     # Ratings Analysis
-    #     with viz_tab1:
-    #         st.subheader("Rating Distribution")
-    #         fig_rating = create_rating_distribution()
-    #         st.plotly_chart(fig_rating, use_container_width=True)
-            
-    #         # Rating statistics
-    #         col1, col2, col3, col4 = st.columns(4)
-            
-    #         if 'rating' in df_books.columns:
-    #             with col1:
-    #                 st.metric("Average Rating", f"{df_books['rating'].mean():.2f}")
-    #             with col2:
-    #                 st.metric("Median Rating", f"{df_books['rating'].median():.2f}")
-    #             with col3:
-    #                 st.metric("Highest Rating", f"{df_books['rating'].max():.2f}")
-    #             with col4:
-    #                 st.metric("Lowest Rating", f"{df_books['rating'].min():.2f}")
-        
-    #     # Cluster Analysis
-    #     with viz_tab2:
-    #         st.subheader("Cluster Distribution")
-    #         fig_cluster = create_cluster_distribution()
-    #         st.plotly_chart(fig_cluster, use_container_width=True)
-            
-    #         st.markdown("### Sample Books from Each Cluster")
-            
-    #         # Show sample books from each cluster
-    #         selected_cluster = st.selectbox(
-    #             "Select a cluster to explore:",
-    #             sorted(df_books['cluster'].unique())
-    #         )
-            
-    #         cluster_books = df_books[df_books['cluster'] == selected_cluster]
-            
-    #         st.markdown(f"**Cluster {selected_cluster}** contains {len(cluster_books)} books")
-            
-    #         # Show top books in this cluster
-    #         if 'popularity_score' in cluster_books.columns:
-    #             top_cluster_books = cluster_books.nlargest(10, 'popularity_score')
-    #         else:
-    #             top_cluster_books = cluster_books.head(10)
-            
-    #         display_cols = ['name', 'author', 'rating']
-    #         display_cols = [col for col in display_cols if col in top_cluster_books.columns]
-            
-    #         st.dataframe(
-    #             top_cluster_books[display_cols],
-    #             use_container_width=True,
-    #             height=400
-    #         )
-        
-    #     # Author Analysis
-    #     with viz_tab3:
-    #         st.subheader("Top Authors Analysis")
-            
-    #         top_n_authors = st.slider("Number of top authors to show:", 10, 30, 15, 5)
-            
-    #         fig_authors = create_top_authors_chart(top_n_authors)
-    #         st.plotly_chart(fig_authors, use_container_width=True)
-        
-    #     # Dataset Overview
-    #     with viz_tab4:
-    #         st.subheader("Dataset Overview")
-            
-    #         # Show dataset sample
-    #         st.markdown("### Sample Data (First 20 Rows)")
-    #         st.dataframe(df_books.head(20), use_container_width=True, height=400)
-            
-    #         # Show column information
-    #         st.markdown("### Column Information")
-            
-    #         col_info = pd.DataFrame({
-    #             'Column': df_books.columns,
-    #             'Data Type': df_books.dtypes.values,
-    #             'Non-Null Count': df_books.count().values,
-    #             'Null Count': df_books.isnull().sum().values
-    #         })
-            
-    #         st.dataframe(col_info, use_container_width=True)
-    
-
-  
-    # ========================================================================
-    # FOOTER
-    # ========================================================================
     
     st.markdown("---")
     st.markdown(
