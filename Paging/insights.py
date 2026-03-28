@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np 
 import pickle  
 from pathlib import Path  
+from sklearn.preprocessing import MultiLabelBinarizer
+from sklearn.metrics.pairwise import cosine_similarity
 import sys  
 sys.path.append(str(Path(__file__).parent / 'models'))
 
@@ -97,6 +99,27 @@ def load_data_and_models():
 df_books, tfidf_vectorizer, tfidf_matrix, cosine_similarity_matrix, kmeans_model = load_data_and_models()
 
 
+# ============================================================================
+# GENRE COSINE SIMILARITY MATRIX (computed once and cached)
+# ============================================================================
+
+@st.cache_data
+def build_genre_similarity_matrix(df):
+    genres = df['Genres_List'].apply(lambda x: x if isinstance(x, list) else [])
+
+    mlb = MultiLabelBinarizer()
+    genre_matrix = mlb.fit_transform(genres)       # (N_books, N_genres)
+    genre_sim    = cosine_similarity(genre_matrix)  # (N_books, N_books)
+
+    return genre_matrix, genre_sim, mlb
+
+# Pre-build at startup — unpack all three values
+genre_book_matrix, genre_similarity_matrix, genre_mlb = build_genre_similarity_matrix(df_books)
+
+
+# ============================================================================
+# RECOMMENDATION FUNCTIONS
+# ============================================================================
 
 def get_content_based_recommendations(book_name, n_recommendations=10):
     """
@@ -184,6 +207,60 @@ def get_cluster_based_recommendations(book_name, n_recommendations=10):
     
     except Exception as e:
         return None, f"Error: {str(e)}"
+
+
+def get_genre_based_recommendations(selected_genres, n_recommendations=10):
+
+    try:
+        # ── 1. Validate input ───────────────────────────────────────────────
+        if not selected_genres:
+            return None, "Please select at least one genre."
+
+        # Keep only genres known to the fitted MLB (unknown genres are ignored)
+        known_genres = set(genre_mlb.classes_)
+        valid_genres = [g for g in selected_genres if g in known_genres]
+        if not valid_genres:
+            return None, f"None of the selected genres exist in the dataset."
+
+        # ── 2. Build the query genre vector ─────────────────────────────────
+        # Transform a single "virtual book" whose genres = selected_genres
+        query_vector = genre_mlb.transform([valid_genres])  # shape: (1, N_genres)
+
+        # ── 3. Cosine similarity between query and all books ─────────────────
+        sim_scores_array = cosine_similarity(query_vector, genre_book_matrix)[0]  # shape: (N_books,)
+
+        # Sort descending and take top N
+        sim_scores = sorted(enumerate(sim_scores_array), key=lambda x: x[1], reverse=True)
+        sim_scores = [(i, s) for i, s in sim_scores if s > 0][:n_recommendations]
+
+        if not sim_scores:
+            return None, "No books found matching the selected genres."
+
+        rec_indices      = [i for i, _ in sim_scores]
+        genre_sim_scores = [s for _, s in sim_scores]
+
+        # ── 4. Build the result DataFrame ────────────────────────────────────
+        recommendations = df_books.iloc[rec_indices].copy()
+        recommendations['genre_similarity_score']      = genre_sim_scores
+        recommendations['genre_similarity_percentage'] = (
+            recommendations['genre_similarity_score'] * 100
+        ).round(2)
+
+        # ── 5. Matched genres column for display ─────────────────────────────
+        query_set = set(valid_genres)
+
+        def matched_genres(row):
+            row_genres = row['Genres_List'] if isinstance(row['Genres_List'], list) else []
+            common = query_set & set(row_genres)
+            return ', '.join(sorted(common)) if common else '—'
+
+        recommendations['matched_genres'] = recommendations.apply(matched_genres, axis=1)
+
+        return recommendations, None
+
+    except Exception as e:
+        return None, f"Error: {str(e)}"
+
 
 def get_hybrid_recommendations(book_name, n_recommendations=10, 
                                weight_content=0.5, weight_cluster=0.3):
@@ -356,8 +433,6 @@ def app():
                     help="Importance of cluster membership"
                 )
             
-
-            
             total_weight = weight_content + weight_cluster
             if total_weight > 0:
                 weight_content /= total_weight
@@ -381,7 +456,6 @@ def app():
                             book_name_input, n_recs,
                             weight_content, weight_cluster
                         )
-                    
                     # Display results
                     if error:
                         st.error(error)
@@ -417,11 +491,93 @@ def app():
                                     if 'cluster' in row:
                                         st.metric("Cluster", int(row['cluster']))
                     else:
-                        st.warning("No recommendations found. Try a different book.")
+                        st.warning("No recommendations found. Try a different book or genre filter.")
             else:
                 st.warning("⚠️ Please select a book name first.")
         
-        
+        # ====================================================================
+        # GENRE-BASED RECOMMENDATIONS (genre input, not book input)
+        # ====================================================================
+
+        st.markdown("---")
+        st.subheader("🎭 Genre-Based Recommendations")
+        st.markdown(
+            "Pick one or more genres and we'll find the best-matching books "
+            "using cosine similarity on genre vectors — no book title needed."
+        )
+
+        genre_col1, genre_col2 = st.columns([3, 1])
+        all_genres = sorted(
+            set(
+                genre
+                for sublist in df_books['Genres_List'].dropna()
+                if isinstance(sublist, list)
+                for genre in sublist
+            )
+        )
+        with genre_col1:
+            selected_genres_input = st.multiselect(
+                "Select genres:",
+                options=all_genres,
+                help="Choose one or more genres. Books are ranked by how well their genre "
+                     "profile matches your selection."
+            )
+
+        with genre_col2:
+            n_genre_recs = st.slider(
+                "Number of results:",
+                min_value=5,
+                max_value=20,
+                value=10,
+                step=1,
+                key="n_genre_recs"
+            )
+
+        if st.button("🎭 Find by Genre", type="primary"):
+            if selected_genres_input:
+                with st.spinner("Scoring books by genre similarity..."):
+                    genre_recs, genre_error = get_genre_based_recommendations(
+                        selected_genres_input, n_genre_recs
+                    )
+
+                if genre_error:
+                    st.error(genre_error)
+                elif genre_recs is not None and len(genre_recs) > 0:
+                    st.success(
+                        f"Found {len(genre_recs)} books matching: "
+                        f"**{', '.join(selected_genres_input)}**"
+                    )
+                    st.markdown("### 📚 Genre-Matched Books:")
+
+                    for idx, row in genre_recs.iterrows():
+                        with st.expander(
+                            f"**{row['Book Name']}** by {row['Author']} "
+                            f"— {row['genre_similarity_percentage']:.1f}% match",
+                            expanded=(idx == genre_recs.index[0])
+                        ):
+                            g_col1, g_col2, g_col3 = st.columns([2, 1, 1])
+
+                            with g_col1:
+                                if 'Description' in row and pd.notna(row['Description']) and row['Description'] != '':
+                                    st.markdown(f"**Description:** {row['Description'][:200]}...")
+                                else:
+                                    st.markdown("*No description available*")
+                                if row.get('matched_genres', '—') != '—':
+                                    st.markdown(f"🎭 **Matched Genres:** `{row['matched_genres']}`")
+
+                            with g_col2:
+                                if 'Rating' in row:
+                                    st.metric("Rating", f"{row['Rating']:.2f} ⭐")
+                                if 'Price' in row:
+                                    st.metric("Price", f"{row['Price']:.2f}")
+
+                            with g_col3:
+                                st.metric("Genre Match", f"{row['genre_similarity_score']:.2%}")
+                else:
+                    st.warning("No books found for the selected genres.")
+            else:
+                st.warning("⚠️ Please select at least one genre.")
+
         with tab2:
             st.header("🌟 Trending & Popular Books")
             st.markdown("Discover the most popular and highly-rated books in our collection.")
